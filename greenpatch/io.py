@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import cv2
+
 
 def run_ffmpeg(command: str) -> None:
     proc = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
@@ -12,8 +14,6 @@ def run_ffmpeg(command: str) -> None:
 
 class VideoIO:
     def __init__(self, path: Path) -> None:
-        import cv2
-
         self.path = Path(path)
         self.cap = cv2.VideoCapture(str(self.path))
         if not self.cap.isOpened():

@@ -100,34 +100,61 @@ def repair(
         if selection is None:
             console.print("[yellow]Quit before selection.[/yellow]")
             raise typer.Exit()
-        prev_gray = cv2.cvtColor(first, cv2.COLOR_BGR2GRAY)
-        prev = TrackResult(0, selection.target_rect, selection.source_rect, selection.target_mask, selection.source_mask)
-        pipeline.write_frame(first)
-        for frame in pipeline.frames():
-            frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            prev = _track_next(prev_gray, frame_gray, prev, cfg)
-            src_patch = cv2.resize(
-                frame[
-                    int(prev.source_rect.y) : int(prev.source_rect.y + prev.source_rect.height),
-                    int(prev.source_rect.x) : int(prev.source_rect.x + prev.source_rect.width),
-                ],
-                (int(prev.target_rect.width), int(prev.target_rect.height)),
-                interpolation=cv2.INTER_LINEAR,
-            )
-            patched = frame.copy()
-            patched[
-                int(prev.target_rect.y) : int(prev.target_rect.y + prev.target_rect.height),
-                int(prev.target_rect.x) : int(prev.target_rect.x + prev.target_rect.width),
-            ] = src_patch
-            if cfg.blend == "copy":
-                out = blend_copies(patched, frame, prev.target_mask)
-            elif cfg.blend == "feather":
-                out = blend_feather(patched, frame, prev.target_mask, cfg.feather)
-            else:
-                out = blend_seamless(frame, patched, prev.target_mask, prev.target_rect)
-            pipeline.write_frame(out)
-            prev_gray = frame_gray
+        repair_video(pipeline, selection, cfg)
     console.print(f"[green]Wrote repaired video -> {output}[/green]")
+
+
+def repair_video(pipeline: "VideoPipeline", selection, cfg: RepairConfig) -> int:
+    """Process every frame after the first: track, clone the source patch onto the
+    target region, blend, and write. Returns the number of frames written."""
+    first = None
+    prev_gray = None
+    frame_h = frame_w = 0
+    written = 0
+    for frame in pipeline.frames():
+        if first is None:
+            first = frame
+            prev_gray = cv2.cvtColor(first, cv2.COLOR_BGR2GRAY)
+            frame_h, frame_w = prev_gray.shape
+            prev = TrackResult(0, selection.target_rect, selection.source_rect, selection.target_mask, selection.source_mask)
+            pipeline.write_frame(first)
+            written += 1
+            continue
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        prev = _track_next(prev_gray, frame_gray, prev, cfg)
+
+        # Bounds-guard the source slice; if the tracker drifted it off-frame, fall
+        # back to the previous frame's content for this frame instead of crashing.
+        sy0 = max(0, int(prev.source_rect.y))
+        sx0 = max(0, int(prev.source_rect.x))
+        sy1 = min(frame_h, int(prev.source_rect.y + prev.source_rect.height))
+        sx1 = min(frame_w, int(prev.source_rect.x + prev.source_rect.width))
+        src_slice = frame[sy0:sy1, sx0:sx1]
+        if src_slice.size == 0:
+            pipeline.write_frame(frame)
+            written += 1
+            prev_gray = frame_gray
+            continue
+
+        ty0 = max(0, int(prev.target_rect.y))
+        tx0 = max(0, int(prev.target_rect.x))
+        th = max(1, min(int(prev.target_rect.height), frame_h - ty0))
+        tw = max(1, min(int(prev.target_rect.width), frame_w - tx0))
+        src_patch = cv2.resize(src_slice, (tw, th), interpolation=cv2.INTER_LINEAR)
+        ty1, tx1 = ty0 + th, tx0 + tw
+        patched = frame.copy()
+        patched[ty0:ty1, tx0:tx1] = src_patch
+
+        if cfg.blend == "copy":
+            out = blend_copies(patched, frame, prev.target_mask)
+        elif cfg.blend == "feather":
+            out = blend_feather(patched, frame, prev.target_mask, cfg.feather)
+        else:
+            out = blend_seamless(frame, patched, prev.target_mask, prev.target_rect)
+        pipeline.write_frame(out)
+        prev_gray = frame_gray
+        written += 1
+    return written
 
 
 @app.command()
