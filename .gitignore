@@ -1,0 +1,14 @@
+__pycache__
+.venv
+.eggs
+*.egg-info
+dist
+build
+output
+*.pyc
+.mypy_cache
+.ruff_cache
+.pytest_cache
+*.swp
+.DS_Store
+Thumbs.db
