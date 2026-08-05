@@ -7,7 +7,14 @@ import cv2
 
 
 def run_ffmpeg(command: str) -> None:
-    proc = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+    import subprocess as _sp
+
+    try:
+        proc = _sp.run(command, shell=True, check=True, capture_output=True, text=True)
+    except _sp.CalledProcessError as exc:
+        raise RuntimeError(
+            f"ffmpeg failed (exit {exc.returncode}): {exc.stderr[-2000:]}"
+        ) from exc
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {proc.stderr}")
 
@@ -34,6 +41,10 @@ class VideoIO:
     @property
     def height(self) -> int:
         return int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    @property
+    def has_audio(self) -> bool:
+        return bool(self.cap.get(cv2.CAP_PROP_AUDIO_STREAM)) if hasattr(cv2, "CAP_PROP_AUDIO_STREAM") else True
 
     def read_frame(self):
         ret, frame = self.cap.read()

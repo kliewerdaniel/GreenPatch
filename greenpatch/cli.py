@@ -10,6 +10,7 @@ from rich.console import Console
 
 from greenpatch.config import RepairConfig, validate_blend, validate_tracker, apply_padding, dilate_mask
 from greenpatch.video import VideoPipeline, encode_frames_to_video
+from greenpatch.io import run_ffmpeg
 from greenpatch.ui.first_frame_selector import FirstFrameSelector
 from greenpatch.tracker import Rect, TrackResult
 from greenpatch.ai.auto_mask import AutoMasker
@@ -77,6 +78,7 @@ def repair(
     padding: int = typer.Option(15, "--padding", "-p", help="Padding around selected regions."),
     feather: int = typer.Option(8, "--feather", help="Feather radius for feather mode."),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c", help="YAML config file."),
+    no_audio: bool = typer.Option(False, "--no-audio", help="Skip copying the original audio track."),
 ) -> None:
     validate_tracker(tracker)
     validate_blend(blend)
@@ -101,7 +103,40 @@ def repair(
             console.print("[yellow]Quit before selection.[/yellow]")
             raise typer.Exit()
         repair_video(pipeline, selection, cfg)
-    console.print(f"[green]Wrote repaired video -> {output}[/green]")
+    if no_audio:
+        console.print(f"[green]Wrote repaired video (no audio) -> {output}[/green]")
+        return
+    muxed = _mux_audio(input, output)
+    if muxed:
+        console.print(f"[green]Wrote repaired video -> {output}[/green]")
+    else:
+        console.print(f"[yellow]No audio stream found in input; wrote silent video -> {output}[/yellow]")
+
+
+def _mux_audio(input_path: Path, output_path: Path) -> bool:
+    """Copy the repaired video stream and the ORIGINAL audio track into the output.
+
+    The OpenCV writer emits a silent clip, so we re-mux with ffmpeg to recover the
+    source audio. Returns False if the input has no audio stream (silent output kept)."""
+    from greenpatch.io import VideoIO
+
+    if not VideoIO(input_path).has_audio:
+        return False
+    temp = output_path.with_suffix(f".silent{output_path.suffix}")
+    output_path.replace(temp)
+    cmd = (
+        f'ffmpeg -y -i "{temp}" -i "{input_path}" '
+        f'-map 0:v:0 -map 1:a:0 -c:v copy -c:a copy "{output_path}"'
+    )
+    try:
+        run_ffmpeg(cmd)
+    except RuntimeError:
+        # Mux failed for any reason; restore the silent clip rather than lose the work.
+        temp.replace(output_path)
+        return False
+    if temp.exists():
+        temp.unlink()
+    return True
 
 
 def repair_video(pipeline: "VideoPipeline", selection, cfg: RepairConfig) -> int:
