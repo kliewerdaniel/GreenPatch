@@ -50,7 +50,13 @@ python3.12 -m pytest tests -q
 ```bash
 greenpatch repair input.mp4 output.mp4
 greenpatch repair input.mp4 output.mp4 --tracker optical --blend seamless --padding 15 --feather 8 --config greenpatch.yaml
+greenpatch repair input.mp4 output.mp4 --no-audio   # keep silent output (skip audio mux)
 ```
+
+By default the repaired clip keeps the **original audio track** — the frame writer
+emits a silent clip, then FFmpeg re-muxes the source audio in (stream copy). Use
+`--no-audio` to skip that step. If the input has no audio, the mux is skipped
+automatically.
 
 ### First-frame selector
 
@@ -111,4 +117,5 @@ New AI modules should implement `greenpatch.ai.segmentation.BaseSegmenter` and p
 
 - [ ] `python3.12 -m compileall greenpatch tests examples`
 - [ ] `python3.12 -m pytest tests -q`
-- [ ] `greenpatch repair --help` shows options
+- [ ] `greenpatch repair --help` shows options (incl. `--no-audio`)
+- [ ] `python examples/headless_repair_test.py` writes valid clips for planar/seamless, optical/feather, planar/copy
